@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from panda3d.core import Filename, SamplerState, Texture
+from panda3d.core import Filename, PNMImage, SamplerState, Texture
 
 ROOT = Path(__file__).resolve().parent
 TEXTURE_ROOT = ROOT / "assets" / "textures"
@@ -87,102 +87,106 @@ def _fresh(dest: Path, source: Path) -> bool:
     return dest.exists() and dest.stat().st_mtime >= source.stat().st_mtime
 
 
+def _write_pnm(image: PNMImage, path: Path) -> bool:
+    return bool(image.write(os_path(path)))
+
+
 def make_star_glow(size: int = 64) -> Path:
     """Soft white radial sprite for nearby stars."""
-    from PIL import Image
-
     path = ensure_generated_dir() / f"star_glow_{size}.png"
     if path.exists():
         return path
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    img = PNMImage(size, size, 4)
+    img.fill(0, 0, 0)
+    img.alpha_fill(0)
     cx = cy = (size - 1) / 2.0
     radius = size / 2.0
-    pixels = img.load()
     for y in range(size):
         for x in range(size):
             dx = (x - cx) / radius
             dy = (y - cy) / radius
-            d = (dx * dx + dy * dy) ** 0.5
-            core = max(0.0, 1.0 - d)
+            dist = (dx * dx + dy * dy) ** 0.5
+            core = max(0.0, 1.0 - dist)
             alpha = core**2.6
             shade = min(1.0, core * 1.15)
-            pixels[x, y] = (
-                int(255 * shade),
-                int(245 * shade + 10),
-                int(255 * shade),
-                int(255 * alpha),
-            )
-    img.save(path)
+            img.set_xel(x, y, shade, 0.96 * shade + 0.04, shade)
+            img.set_alpha(x, y, alpha)
+    if not _write_pnm(img, path):
+        raise OSError(f"Could not write star glow: {path}")
     return path
 
 
-def _radial_mask(size: tuple[int, int], power: float = 2.2):
-    from PIL import Image
-
-    small = Image.new("L", (256, 256))
-    pixels = small.load()
-    center = 127.5
-    for y in range(256):
-        for x in range(256):
-            dist = ((x - center) ** 2 + (y - center) ** 2) ** 0.5 / center
-            pixels[x, y] = int(255 * max(0.0, 1.0 - dist**power))
-    return small.resize(size, Image.Resampling.BICUBIC)
-
-
 def make_cloud_sprite(relative: str) -> Path:
-    """Cut a nebula/galaxy photo into a soft-edged glowing sprite."""
-    from PIL import Image, ImageChops, ImageFilter
-
+    """Cut a nebula/galaxy photo into a soft-edged sprite. Falls back to the original."""
     source = TEXTURE_ROOT / relative
     dest = ensure_generated_dir() / f"{Path(relative).stem}_cloud.png"
     if _fresh(dest, source):
         return dest
-
-    rgb = Image.open(source).convert("RGB")
-    rgb.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
-    luma = rgb.convert("L").point(lambda p: 0 if p < 10 else min(255, int((p - 8) * 1.2)))
-    luma = luma.filter(ImageFilter.GaussianBlur(1.2))
-    alpha = ImageChops.multiply(luma, _radial_mask(rgb.size))
-    out = rgb.convert("RGBA")
-    out.putalpha(alpha)
-    out.save(dest)
+    src = PNMImage()
+    if not source.exists() or not src.read(os_path(source)):
+        return source
+    if not src.has_alpha():
+        src.add_alpha()
+    width, height = src.get_x_size(), src.get_y_size()
+    cx, cy = (width - 1) / 2.0, (height - 1) / 2.0
+    radius = min(cx, cy) * 0.92
+    for y in range(height):
+        for x in range(width):
+            red = src.get_red(x, y)
+            green = src.get_green(x, y)
+            blue = src.get_blue(x, y)
+            luma = 0.3 * red + 0.59 * green + 0.11 * blue
+            alpha = max(0.0, min(1.0, (luma - 0.04) / 0.7))
+            dx, dy = (x - cx) / radius, (y - cy) / radius
+            vig = max(0.0, 1.0 - (dx * dx + dy * dy) ** 1.1)
+            src.set_alpha(x, y, alpha * vig)
+    if not _write_pnm(src, dest):
+        return source
     return dest
 
 
 def make_cutout_sprite(relative: str) -> Path:
     """Keep a photographed asteroid and drop the black space around it."""
-    from PIL import Image, ImageFilter
-
     source = TEXTURE_ROOT / relative
     dest = ensure_generated_dir() / f"{Path(relative).stem}_cutout.png"
     if _fresh(dest, source):
         return dest
-
-    rgb = Image.open(source).convert("RGB")
-    rgb.thumbnail((1400, 1400), Image.Resampling.LANCZOS)
-    luma = rgb.convert("L")
-    alpha = luma.point(lambda p: 0 if p < 8 else 255 if p > 22 else int((p - 8) * 18))
-    alpha = alpha.filter(ImageFilter.GaussianBlur(1.0))
-    out = rgb.convert("RGBA")
-    out.putalpha(alpha)
-    out.save(dest)
+    src = PNMImage()
+    if not source.exists() or not src.read(os_path(source)):
+        return source
+    if not src.has_alpha():
+        src.add_alpha()
+    for y in range(src.get_y_size()):
+        for x in range(src.get_x_size()):
+            luma = (
+                0.3 * src.get_red(x, y)
+                + 0.59 * src.get_green(x, y)
+                + 0.11 * src.get_blue(x, y)
+            )
+            if luma < 0.03:
+                alpha = 0.0
+            elif luma > 0.09:
+                alpha = 1.0
+            else:
+                alpha = (luma - 0.03) / 0.06
+            src.set_alpha(x, y, alpha)
+    if not _write_pnm(src, dest):
+        return source
     return dest
 
 
 def make_ring_texture() -> Path:
     """Build a radial Saturn-ring profile (U wraps around, V is radius)."""
-    from PIL import Image
-
     dest = ensure_generated_dir() / "saturn_rings.png"
     if dest.exists():
         return dest
 
     width, height = 8, 256
-    img = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    pixels = img.load()
+    img = PNMImage(width, height, 4)
+    img.fill(0, 0, 0)
+    img.alpha_fill(0)
     for y in range(height):
         t = y / (height - 1)
-        # Cassini-like gaps so the rings read as rings, not a disc
         bands = (
             0.08
             + 0.75 * _smoothstep(0.04, 0.16, t)
@@ -193,15 +197,14 @@ def make_ring_texture() -> Path:
             - 0.35 * _smoothstep(0.90, 0.99, t)
         )
         bands = max(0.0, min(1.0, bands))
-        color = (
-            int(230 * bands + 20),
-            int(205 * bands + 12),
-            int(150 * bands),
-            int(255 * bands),
-        )
+        red = min(1.0, 0.90 * bands + 0.08)
+        green = min(1.0, 0.80 * bands + 0.05)
+        blue = 0.59 * bands
         for x in range(width):
-            pixels[x, y] = color
-    img.save(dest)
+            img.set_xel(x, y, red, green, blue)
+            img.set_alpha(x, y, bands)
+    if not _write_pnm(img, dest):
+        raise OSError(f"Could not write Saturn rings: {dest}")
     return dest
 
 

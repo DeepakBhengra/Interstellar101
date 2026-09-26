@@ -41,7 +41,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-The first launch writes a cockpit overlay and star-glow sprite under `assets/generated/`.
+The first launch writes a cockpit overlay and star-glow sprite under `assets/generated/` using Panda3D only — Pillow is not required.
 
 This is a desktop OpenGL app, not a web page.
 
@@ -69,6 +69,5 @@ This is a desktop OpenGL app, not a web page.
 
 - Python 3
 - [Panda3D](https://www.panda3d.org/)
-- Pillow (cockpit overlay and star glow)
 
 See `ATTRIBUTION.md` for the full image credit list.

@@ -174,8 +174,13 @@ def _make_planets(game, world: SpaceWorld):
             body.set_light_off()
             body.set_color(1.15, 1.0, 0.75, 1)
             glow = _billboard_card(body, "sun-glow", spec["radius"] * 4.6, spec["radius"] * 4.6)
-            glow_tex = game.loader.load_texture(os_path(make_star_glow(128)))
-            glow.set_texture(glow_tex)
+            try:
+                glow_tex = game.loader.load_texture(os_path(make_star_glow(128)))
+            except OSError as exc:
+                print(f"Could not build sun glow: {exc}")
+                glow_tex = None
+            if glow_tex is not None:
+                glow.set_texture(glow_tex)
             _soft_sprite(glow, 8)
             glow.set_color(1.0, 0.75, 0.25, 0.85)
         if spec.get("atmo") and not spec.get("emissive"):
@@ -190,7 +195,11 @@ def _make_planets(game, world: SpaceWorld):
             body.set_p(26)
             rings = make_ring_disc("saturn-rings", spec["radius"] * 1.35, spec["radius"] * 2.45, segments=128)
             rings.reparent_to(body)
-            ring_tex = load_texture_path(game.loader, make_ring_texture(), wrap_repeat=False)
+            try:
+                ring_tex = load_texture_path(game.loader, make_ring_texture(), wrap_repeat=False)
+            except OSError as exc:
+                print(f"Could not build Saturn rings: {exc}")
+                ring_tex = None
             if ring_tex is not None:
                 ring_tex.set_wrap_u(SamplerState.WM_repeat)
                 ring_tex.set_wrap_v(SamplerState.WM_clamp)
@@ -307,7 +316,11 @@ def _make_asteroids(game, world: SpaceWorld, rng: random.Random):
 
 
 def _make_foreground_stars(game, world: SpaceWorld, rng: random.Random):
-    glow = game.loader.load_texture(os_path(make_star_glow(64)))
+    try:
+        glow = game.loader.load_texture(os_path(make_star_glow(64)))
+    except OSError as exc:
+        print(f"Could not build star glow: {exc}")
+        glow = None
     colors = [
         (0.75, 0.85, 1.0),
         (1.0, 1.0, 1.0),
@@ -324,7 +337,8 @@ def _make_foreground_stars(game, world: SpaceWorld, rng: random.Random):
             rng.uniform(-30, 1400),
             rng.uniform(-140, 160),
         )
-        star.set_texture(glow)
+        if glow is not None:
+            star.set_texture(glow)
         _soft_sprite(star, 6)
         color = rng.choice(colors)
         bright = rng.uniform(0.55, 1.15)

@@ -5,120 +5,105 @@ from __future__ import annotations
 from pathlib import Path
 
 from direct.gui.OnscreenText import OnscreenText
-from panda3d.core import CardMaker, SamplerState, TextNode, TransparencyAttrib
+from panda3d.core import CardMaker, PNMImage, SamplerState, TextNode, TransparencyAttrib
 
 from textures import ensure_generated_dir, load_hud_font, os_path
 
 
-def make_cockpit_overlay(size=(1920, 1080)) -> Path:
-    """Dark metal canopy with a hexagonal windshield cutout."""
-    from PIL import Image, ImageDraw, ImageFilter
+def _in_polygon(x: float, y: float, pts: list[tuple[float, float]]) -> bool:
+    inside = False
+    last_x, last_y = pts[-1]
+    for px, py in pts:
+        if (py > y) != (last_y > y):
+            cross = (last_x - px) * (y - py) / ((last_y - py) or 1e-6) + px
+            if x < cross:
+                inside = not inside
+        last_x, last_y = px, py
+    return inside
 
+
+def _fill_rect(img: PNMImage, x0, y0, x1, y1, color, alpha):
+    width, height = img.get_x_size(), img.get_y_size()
+    x0, x1 = max(0, int(x0)), min(width, int(x1))
+    y0, y1 = max(0, int(y0)), min(height, int(y1))
+    red, green, blue = color
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            img.set_xel(x, y, red, green, blue)
+            img.set_alpha(x, y, alpha)
+
+
+def make_cockpit_overlay(size=(1280, 720)) -> Path:
+    """Dark metal canopy with a hexagonal windshield cutout."""
     path = ensure_generated_dir() / "cockpit.png"
     if path.exists():
         return path
 
-    w, h = size
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
+    width, height = size
+    img = PNMImage(width, height, 4)
+    img.fill(0.03, 0.04, 0.06)
+    img.alpha_fill(0.92)
 
-    # Hexagonal windshield opening (transparent glass)
-    inset_x, inset_top, inset_bot = 210, 78, 250
+    inset_x, inset_top, inset_bot = 140, 52, 168
     hex_pts = [
-        (inset_x + 90, inset_top),
-        (w - inset_x - 90, inset_top),
-        (w - inset_x + 20, h * 0.42),
-        (w - inset_x - 40, h - inset_bot),
-        (inset_x + 40, h - inset_bot),
-        (inset_x - 20, h * 0.42),
+        (inset_x + 60, inset_top),
+        (width - inset_x - 60, inset_top),
+        (width - inset_x + 12, height * 0.42),
+        (width - inset_x - 28, height - inset_bot),
+        (inset_x + 28, height - inset_bot),
+        (inset_x - 12, height * 0.42),
     ]
 
-    # Opaque hull everywhere except the glass
-    hull = Image.new("RGBA", (w, h), (8, 11, 16, 235))
-    mask = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(mask).polygon(hex_pts, fill=255)
-    hull.putalpha(235)
-    clear = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    hull = Image.composite(clear, hull, mask)
-    img.alpha_composite(hull)
+    for y in range(inset_top, height - inset_bot + 8):
+        for x in range(inset_x - 20, width - inset_x + 20):
+            if not _in_polygon(x, y, hex_pts):
+                continue
+            edge = (
+                not _in_polygon(x - 5, y, hex_pts)
+                or not _in_polygon(x + 5, y, hex_pts)
+                or not _in_polygon(x, y - 5, hex_pts)
+                or not _in_polygon(x, y + 5, hex_pts)
+            )
+            if edge:
+                img.set_xel(x, y, 0.20, 0.82, 0.92)
+                img.set_alpha(x, y, 0.85)
+            else:
+                img.set_xel(x, y, 0.015, 0.07, 0.12)
+                img.set_alpha(x, y, 0.06)
 
-    # Inner cyan rim around the glass
-    rim = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    rim_draw = ImageDraw.Draw(rim)
-    rim_draw.polygon(hex_pts, outline=(90, 230, 255, 210), width=6)
-    rim_draw.polygon(hex_pts, outline=(20, 80, 110, 160), width=14)
-    img.alpha_composite(rim.filter(ImageFilter.GaussianBlur(1.2)))
+    _fill_rect(img, 0, 0, width, 44, (0.025, 0.035, 0.055), 0.96)
+    _fill_rect(img, 0, 42, width, 46, (0.16, 0.75, 0.86), 0.75)
+    _fill_rect(img, 0, height - 150, width, height, (0.027, 0.039, 0.059), 0.97)
+    _fill_rect(img, 120, height - 168, width - 120, height - 148, (0.027, 0.039, 0.059), 0.97)
+    _fill_rect(img, 120, height - 168, width - 120, height - 165, (0.20, 0.82, 0.90), 0.8)
+    _fill_rect(img, 32, height - 136, 280, height - 24, (0.045, 0.07, 0.09), 0.88)
+    _fill_rect(img, width - 280, height - 136, width - 32, height - 24, (0.045, 0.07, 0.09), 0.88)
+    _fill_rect(img, width * 0.5 - 150, height - 128, width * 0.5 + 150, height - 30, (0.045, 0.07, 0.09), 0.82)
 
-    # Canopy struts
-    draw = ImageDraw.Draw(img)
-    strut_color = (18, 24, 32, 230)
-    draw.line((w * 0.5, inset_top, w * 0.5, inset_top + 36), fill=strut_color, width=10)
-    draw.line((inset_x + 40, h - inset_bot, w * 0.5, h * 0.62), fill=(16, 22, 30, 120), width=3)
-    draw.line((w - inset_x - 40, h - inset_bot, w * 0.5, h * 0.62), fill=(16, 22, 30, 120), width=3)
-
-    # Top status rail
-    draw.rectangle((0, 0, w, 64), fill=(6, 9, 14, 245))
-    draw.rectangle((0, 62, w, 66), fill=(40, 190, 220, 180))
-
-    # Bottom instrument shelf
-    draw.polygon(
-        [
-            (0, h),
-            (0, h - 210),
-            (180, h - 250),
-            (w - 180, h - 250),
-            (w, h - 210),
-            (w, h),
-        ],
-        fill=(7, 10, 15, 250),
-    )
-    draw.line((180, h - 250, w - 180, h - 250), fill=(50, 210, 230, 200), width=3)
-
-    # Corner brackets
-    bracket = (70, 220, 240, 200)
-    for x0, x1 in ((36, 150), (w - 150, w - 36)):
-        draw.rectangle((x0, 80, x1, 84), fill=bracket)
-        draw.rectangle((x0 if x0 < w / 2 else x1 - 4, 80, x0 + 4 if x0 < w / 2 else x1, 150), fill=bracket)
-
-    # Glass vignette so the hull reads as a windshield, not a UI box
-    vignette = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    vdraw = ImageDraw.Draw(vignette)
-    vdraw.polygon(hex_pts, fill=(4, 18, 32, 38))
-    img.alpha_composite(vignette)
-
-    # Soft dirt / reflection streaks on the glass
-    streaks = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    sdraw = ImageDraw.Draw(streaks)
-    sdraw.line((w * 0.22, h * 0.18, w * 0.38, h * 0.55), fill=(180, 220, 255, 18), width=2)
-    sdraw.line((w * 0.70, h * 0.16, w * 0.78, h * 0.42), fill=(180, 220, 255, 14), width=2)
-    img.alpha_composite(streaks)
-
-    # Instrument wells on the dashboard
-    well = (12, 18, 24, 220)
-    draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle((48, h - 200, 420, h - 36), radius=12, fill=well, outline=(40, 160, 180, 160), width=2)
-    draw.rounded_rectangle((w - 420, h - 200, w - 48, h - 36), radius=12, fill=well, outline=(40, 160, 180, 160), width=2)
-    draw.rounded_rectangle((w * 0.5 - 220, h - 190, w * 0.5 + 220, h - 44), radius=10, fill=well, outline=(40, 160, 180, 120), width=1)
-
-    img.save(path)
+    if not img.write(os_path(path)):
+        raise OSError(f"Could not write cockpit overlay: {path}")
     return path
 
 
 class CockpitHUD:
     def __init__(self, base):
-        overlay_path = make_cockpit_overlay()
-        tex = base.loader.load_texture(os_path(overlay_path))
-        tex.set_minfilter(SamplerState.FT_linear)
-        tex.set_magfilter(SamplerState.FT_linear)
-
-        cm = CardMaker("cockpit-overlay")
-        cm.set_frame(-1, 1, -1, 1)
-        self.overlay = base.render2d.attach_new_node(cm.generate())
-        self.overlay.set_texture(tex)
-        self.overlay.set_transparency(TransparencyAttrib.MAlpha)
-        self.overlay.set_bin("fixed", 50)
-        self.overlay.set_depth_test(False)
-        self.overlay.set_depth_write(False)
+        self.overlay = None
+        try:
+            overlay_path = make_cockpit_overlay()
+            tex = base.loader.load_texture(os_path(overlay_path))
+            if tex is not None:
+                tex.set_minfilter(SamplerState.FT_linear)
+                tex.set_magfilter(SamplerState.FT_linear)
+                cm = CardMaker("cockpit-overlay")
+                cm.set_frame(-1, 1, -1, 1)
+                self.overlay = base.render2d.attach_new_node(cm.generate())
+                self.overlay.set_texture(tex)
+                self.overlay.set_transparency(TransparencyAttrib.MAlpha)
+                self.overlay.set_bin("fixed", 50)
+                self.overlay.set_depth_test(False)
+                self.overlay.set_depth_write(False)
+        except OSError as exc:
+            print(f"Could not build cockpit overlay: {exc}")
 
         cyan = (0.25, 0.95, 1, 1)
         dim = (0.55, 0.75, 0.85, 1)
