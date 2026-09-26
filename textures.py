@@ -22,6 +22,13 @@ def os_path(path: Path) -> Filename:
     return Filename.from_os_specific(str(path))
 
 
+def panda_path(path: Path) -> str:
+    """Panda3D wants Unix-style paths even on Windows (/c/Interstellar/...)."""
+    filename = Filename.from_os_specific(str(path))
+    filename.make_absolute()
+    return filename.get_fullpath()
+
+
 def find_font() -> Path | None:
     for candidate in FONT_CANDIDATES:
         if candidate.exists():
@@ -33,14 +40,18 @@ def load_hud_font(loader):
     path = find_font()
     if path is None:
         return None
-    return loader.load_font(
-        str(path),
-        spaceAdvance=1.15,
-        lineHeight=1.15,
-        pointSize=12,
-        pixelsPerUnit=56,
-        textureMargin=6,
-    )
+    try:
+        return loader.load_font(
+            panda_path(path),
+            spaceAdvance=1.15,
+            lineHeight=1.15,
+            pointSize=12,
+            pixelsPerUnit=56,
+            textureMargin=6,
+        )
+    except OSError as exc:
+        print(f"Could not load HUD font {path}: {exc}")
+        return None
 
 
 def load_texture(loader, relative: str, wrap_repeat: bool = False) -> Texture | None:
