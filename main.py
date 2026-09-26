@@ -1,209 +1,145 @@
+"""INTERSTELLAR — fly a cockpit through real NASA / Hubble imagery."""
+
+from __future__ import annotations
+
+from panda3d.core import WindowProperties, loadPrcFileData
+
+loadPrcFileData("", "window-title INTERSTELLAR - Space Cockpit")
+loadPrcFileData("", "win-size 1280 720")
+loadPrcFileData("", "audio-library-name null")
+loadPrcFileData("", "sync-video #t")
 
 from direct.showbase.ShowBase import ShowBase
-from direct.gui.OnscreenText import OnscreenText
-from direct.gui.OnscreenImage import OnscreenImage
-from panda3d.core import (
-    WindowProperties,
-    AmbientLight,
-    DirectionalLight,
-    Vec4,
-    Vec3,
-    TextNode,
-)
-import random
+
+from cockpit import CockpitHUD
+from world import build_world, update_world
 
 
 class InterstellarGame(ShowBase):
-
     def __init__(self):
         super().__init__()
 
-        # Window setup
-        props = WindowProperties()
-        props.setTitle("INTERSTELLAR - Space Cockpit")
-        props.setSize(1280, 720)
-        self.win.requestProperties(props)
+        if self.win is not None and hasattr(self.win, "request_properties"):
+            props = WindowProperties()
+            props.set_title("INTERSTELLAR - Space Cockpit")
+            props.set_size(1280, 720)
+            self.win.request_properties(props)
 
-        self.setBackgroundColor(0.002, 0.004, 0.02, 1)
-        
-      
+        self.set_background_color(0.002, 0.003, 0.015, 1)
+        self.disable_mouse()
+        self.camLens.set_near_far(0.08, 22000)
+        self.camLens.set_fov(62)
 
-        # Game variables
-        self.speed = 0.0
-        self.max_speed = 100.0
+        self.camera.set_pos(0, -38, 7)
+        self.camera.look_at(10, 105, -3)
+
+        self.speed = 12.0
+        self.cruise_max = 70.0
+        self.hyper_max = 210.0
         self.hyperdrive = False
+        self.base_fov = 62.0
 
-        # First-person camera
-        self.disableMouse()
-        self.camera.setPos(0, 0, 0)
-        self.camera.setHpr(0, 0, 0)
+        self.world = build_world(self)
+        self.hud = CockpitHUD(self)
+        self.targets = list(self.world.bodies)
+        self.target_index = next(i for i, b in enumerate(self.targets) if b.name == "Earth")
 
-        # Lighting
-        ambient = AmbientLight("ambient")
-        ambient.setColor(Vec4(0.4, 0.4, 0.6, 1))
-        ambient_node = self.render.attachNewNode(ambient)
-        self.render.setLight(ambient_node)
-
-        directional = DirectionalLight("directional")
-        directional.setColor(Vec4(0.7, 0.8, 1, 1))
-        directional_node = self.render.attachNewNode(directional)
-        directional_node.setHpr(-30, -45, 0)
-        self.render.setLight(directional_node)
-
-        # Create starfield
-        self.stars = []
-        self.create_stars(500)
-
-        # Cockpit HUD
-        self.hud = OnscreenText(
-            text="INTERSTELLAR EXPLORER",
-            pos=(0, 0.9),
-            scale=0.055,
-            fg=(0.1, 0.9, 1, 1),
-            align=TextNode.ACenter,
-            mayChange=True
-        )
-
-        self.status = OnscreenText(
-            text="SYSTEM: ONLINE",
-            pos=(-1.25, 0.85),
-            scale=0.045,
-            fg=(0.2, 1, 0.7, 1),
-            align=TextNode.ALeft,
-            mayChange=True
-        )
-
-        self.speed_display = OnscreenText(
-            text="SPEED: 0",
-            pos=(1.0, 0.85),
-            scale=0.05,
-            fg=(0.1, 0.9, 1, 1),
-            align=TextNode.ARight,
-            mayChange=True
-        )
-
-        self.destination = OnscreenText(
-            text="DESTINATION: ALPHA CENTAURI",
-            pos=(-1.25, -0.9),
-            scale=0.04,
-            fg=(0.1, 0.9, 1, 1),
-            align=TextNode.ALeft
-        )
-
-        self.controls = OnscreenText(
-            text="W/S: Thrust | A/D: Turn | "
-                 "Q/E: Pitch | SPACE: Hyperdrive",
-            pos=(0, -0.95),
-            scale=0.04,
-            fg=(0.7, 0.8, 1, 1),
-            align=TextNode.ACenter
-        )
-
-        # Keyboard controls
         self.keys = {}
-        for key in ["w", "s", "a", "d", "q", "e", "space"]:
+        for key in ("w", "s", "a", "d", "q", "e", "z", "c", "space"):
             self.keys[key] = False
             self.accept(key, self.set_key, [key, True])
-            self.accept(key + "-up", self.set_key, [key, False])
-
+            self.accept(f"{key}-up", self.set_key, [key, False])
+        self.accept("tab", self.cycle_target)
+        self.accept("f", self.face_target)
         self.accept("escape", self.userExit)
+        self.accept("r", self.reset_ship)
 
-        # Main game loop
         self.taskMgr.add(self.update_game, "update_game")
-
-    def create_stars(self, count):
-        for _ in range(count):
-            star = self.render.attachNewNode(
-                "star"
-            )
-
-            x = random.uniform(-150, 150)
-            y = random.uniform(20, 300)
-            z = random.uniform(-100, 100)
-
-            star.setPos(x, y, z)
-            star.setScale(random.uniform(0.05, 0.18))
-
-            star.setColor(
-                random.uniform(0.5, 1),
-                random.uniform(0.7, 1),
-                1,
-                1
-            )
-
-            # Small glowing point
-            star.setLightOff()
-            star.setTwoSided(True)
-
-            from panda3d.core import CardMaker
-            cm = CardMaker("star")
-            cm.setFrame(-1, 1, -1, 1)
-            card = star.attachNewNode(cm.generate())
-            card.setBillboardPointEye()
-            card.setColor(0.5, 0.85, 1, 1)
-
-            self.stars.append(star)
 
     def set_key(self, key, value):
         self.keys[key] = value
 
+    def cycle_target(self):
+        self.target_index = (self.target_index + 1) % len(self.targets)
+
+    def current_target(self):
+        return self.targets[self.target_index]
+
+    def face_target(self):
+        target = self.current_target()
+        self.camera.look_at(target.node.get_pos(self.render))
+
+    def reset_ship(self):
+        self.camera.set_pos(0, -38, 7)
+        self.camera.look_at(10, 105, -3)
+        self.speed = 12.0
+
+    def nearest_visual(self):
+        cam = self.camera.get_pos(self.render)
+        forward = self.camera.get_quat(self.render).get_forward()
+        best = None
+        best_score = -1.0
+        best_dist = 0.0
+        for body in self.world.bodies:
+            delta = body.node.get_pos(self.render) - cam
+            dist = delta.length() - body.radius
+            if dist <= 1:
+                continue
+            align = delta.normalized().dot(forward)
+            if align < 0.62:
+                continue
+            score = align * 180.0 / max(dist, 8.0)
+            if score > best_score:
+                best_score = score
+                best = body
+                best_dist = dist
+        if best is None:
+            return "DEEP SPACE", 0.0
+        return best.name, best_dist
+
     def update_game(self, task):
-        dt = min(globalClock.getDt(), 0.05)
+        dt = min(globalClock.get_dt(), 0.05)
 
-        # Acceleration and braking
         if self.keys["w"]:
-            self.speed += 30 * dt
-
+            self.speed += 28 * dt
         if self.keys["s"]:
-            self.speed -= 40 * dt
+            self.speed -= 36 * dt
 
-        self.speed = max(0, min(self.speed, self.max_speed))
-
-        # Turn the ship
-        if self.keys["a"]:
-            self.camera.setH(self.camera.getH() + 60 * dt)
-
-        if self.keys["d"]:
-            self.camera.setH(self.camera.getH() - 60 * dt)
-
-        if self.keys["q"]:
-            self.camera.setP(self.camera.getP() + 40 * dt)
-
-        if self.keys["e"]:
-            self.camera.setP(self.camera.getP() - 40 * dt)
-
-        # Hyperdrive
-        if self.keys["space"]:
-            self.hyperdrive = True
-            self.speed = min(100, self.speed + 80 * dt)
-        else:
-            self.hyperdrive = False
-
-        # Move stars toward the cockpit
-        for star in self.stars:
-            star.setY(
-                star.getY() - self.speed * dt
-            )
-
-            if star.getY() < 2:
-                star.setY(random.uniform(150, 300))
-                star.setX(random.uniform(-150, 150))
-                star.setZ(random.uniform(-100, 100))
-
-        # Update HUD
-        self.speed_display.setText(
-            f"SPEED: {int(self.speed)}"
-        )
-
+        self.hyperdrive = self.keys["space"]
+        max_speed = self.hyper_max if self.hyperdrive else self.cruise_max
         if self.hyperdrive:
-            self.status.setText("HYPERDRIVE: ENGAGED")
-            self.hud.setFg((1, 0.4, 0.1, 1))
-        else:
-            self.status.setText("SYSTEM: ONLINE")
-            self.hud.setFg((0.1, 0.9, 1, 1))
+            self.speed += 90 * dt
+        self.speed = max(0.0, min(self.speed, max_speed))
+        if not self.hyperdrive and self.speed > self.cruise_max:
+            self.speed -= 50 * dt
 
+        yaw = (self.keys["a"] - self.keys["d"]) * 52
+        pitch = (self.keys["q"] - self.keys["e"]) * 38
+        roll = (self.keys["z"] - self.keys["c"]) * 40
+        self.camera.set_h(self.camera.get_h() + yaw * dt)
+        self.camera.set_p(max(-82, min(82, self.camera.get_p() + pitch * dt)))
+        self.camera.set_r(self.camera.get_r() * (1.0 - 2.2 * dt) + roll * dt)
+
+        forward = self.camera.get_quat(self.render).get_forward()
+        self.camera.set_pos(self.camera.get_pos(self.render) + forward * self.speed * dt)
+
+        target_fov = 84 if self.hyperdrive else self.base_fov
+        current = self.camLens.get_fov()
+        # get_fov can be a VBase2; use the X component
+        try:
+            current_x = float(current[0])
+        except TypeError:
+            current_x = float(current)
+        self.camLens.set_fov(current_x + (target_fov - current_x) * min(1.0, 3.0 * dt))
+
+        update_world(self.world, dt, self.camera.get_pos(self.render))
+
+        target = self.current_target()
+        dest_range = (target.node.get_pos(self.render) - self.camera.get_pos(self.render)).length()
+        visual, _ = self.nearest_visual()
+        self.hud.update(self.speed, self.hyperdrive, target.name, dest_range, visual)
         return task.cont
 
 
-game = InterstellarGame()
-game.run()
+if __name__ == "__main__":
+    InterstellarGame().run()
